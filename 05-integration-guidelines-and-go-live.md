@@ -11,7 +11,7 @@ Every room mapping call carries these headers:
 | `accountId`     | Yes      | Your Vervotech room mapping account.                                                                                           |
 | `token`         | Yes      | Your room mapping API token.                                                                                                   |
 | `correlationId` | Yes      | A unique value per request, which you generate. Quote it when raising support requests, because it is how a request is traced. |
-| `culture`       | No       | Response localisation. See References for the supported values.                                                                |
+| `culture`       | No       | Response localisation. See [References](07-references.md) for the supported values.                                            |
 
 Use `demoAccount` while you build. Contact the Vervotech mappings team for your own credentials.
 
