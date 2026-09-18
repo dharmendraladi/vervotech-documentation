@@ -50,108 +50,122 @@ tags:
     description: |
       Room mapping is available through three paths. They share the same mapping engine, but they differ in how much you can send at once, how quickly you get an answer, and how much detail comes back. Pick the path that matches the job before you build against it, because changing path later means reworking your integration.
 
-      ##  Comparing the three paths
+      ## Comparing the three paths
 
-      |   | Real time | Asynchronous | File based (offline) |
-      | --------- | ---------- | ---------- | ---------- |
-      | Endpoint | `POST /api/2.0/mapping/rooms` | `POST /api/2.0/mapping/maproomsasync`, then `GET /api/2.0/mapping/getmappingasync` | `POST /api/MappingTool/FileBasedMapping` |
-      | Hotels per submission | One | One | Many |
-      | Rooms per submission | Up to the payload limit configured on your account | Built for room sets above the real time limit | Up to 100,000 rows, and at most 10 MB per file |
-      | How you get the result | In the response | Poll using the returned `traceId` | Email notification, then download the output file |
-      | Confidence score (`matchScore`, `cfs`) | Yes | Yes | No |
-      | Account mapping rule configuration | Applied | Applied | Not applied |
-      | Language (`culture`) | Yes | Yes | English only |
+      |                                        | Real time                                          | Asynchronous                                                                        | File based (offline)                                |
+      | -------------------------------------- | -------------------------------------------------- | ----------------------------------------------------------------------------------- | --------------------------------------------------- |
+      | Endpoint                               | `POST /api/2.0/mapping/rooms`                      | `POST /api/2.0/mapping/maproomsasync`, then `POST /api/2.0/mapping/getmappingasync` | `POST /api/MappingTool/FileBasedMapping`            |
+      | Hotels per submission                  | One                                                | One                                                                                 | Many                                                |
+      | Rooms per submission                   | Up to the payload limit configured on your account | Built for room sets above the real time limit                                       | 100,000 rows by default, and at most 10 MB per file |
+      | How you get the result                 | In the response                                    | Poll using the returned `traceId`                                                   | Email notification, then download the output file   |
+      | Confidence score (`matchScore`, `cfs`) | Yes                                                | Yes                                                                                 | No                                                  |
+      | Account mapping rule configuration     | Applied                                            | Applied                                                                             | Not applied                                         |
+      | Language (`culture`)                   | Yes                                                | Yes                                                                                 | English only                                        |
 
-      ##  What you give up with file based mapping
+      Both asynchronous calls are `POST`. `getmappingasync` takes the `traceId` as a query parameter rather than in a body.
+
+      ## What the asynchronous response leaves out
+
+      The asynchronous result carries the same room groups and the same `matchScore` and `cfs` values as the real time response, but not every field. For accounts configured for accommodation detail, `occupancyType`, `accommodationType`, `category` and `bedInfo` are absent. Build against the real time response shape and treat these fields as optional.
+
+      ## What you give up with file based mapping
 
       File based mapping is the quickest way to get a large catalogue mapped without writing an integration, and it is the only path that accepts many hotels in one submission. Those conveniences come with real limitations. Every one of them is a behaviour to design around rather than discover in production.
 
-      * **Account mapping rule configuration is not applied to file based runs.** Offline runs are processed in a shared service context rather than in your account context, so mapping rules configured against your account do not take effect. The same rooms can therefore group differently in a file based run than they do through the API. If you depend on your own mapping rules, use the real time or asynchronous path.
-      * **No confidence scores.** The output file carries the mapping result only. There is no `matchScore` and no `cfs`, so you cannot rank or triage the results by confidence the way you can on the API.
-      * **Rows beyond the batch limit are skipped silently.** A maximum of 100,000 rooms are processed per batch. Rows beyond that are skipped, and the run still finishes with status `Completed`. Always compare the row count of your output file against your input file.
-      * **Column headers are matched exactly, and letter case matters.** A misspelled or differently cased header is not reported as an error. The column is read as empty instead, and the file is processed as though you had sent no value at all.
-      * **A run is all or nothing.** If one hotel in the file cannot be processed, the whole run fails and no partial output is uploaded. You resubmit the entire file.
-      * **There is no idempotency key.** Re-uploading the same file starts a new and independent run. Nothing detects or merges duplicate submissions.
-      * **There is no per row error report.** The only failure detail is a run level status and reason, so a problem with a single row is not attributed to that row.
-      * **Supply `VervotechHotelId` wherever you have it.** When a hotel cannot be resolved to a Vervotech ID, its rooms are grouped only among themselves and carry a placeholder identifier in the output, which cannot be joined to your Vervotech content.
-      * **File based runs are processed in English.** The `culture` option is not available on this path.
+      - **Account mapping rule configuration is not applied to file based runs.** Offline runs are processed in a shared service context rather than in your account context, so mapping rules configured against your account do not take effect. The same rooms can therefore group differently in a file based run than they do through the API. If you depend on your own mapping rules, use the real time or asynchronous path.
+      - **No confidence scores.** The output file carries the mapping result only. There is no `matchScore` and no `cfs`, so you cannot rank or triage the results by confidence the way you can on the API.
+      - **Rows beyond the batch limit are skipped silently.** 100,000 rooms are processed per batch by default. Rows beyond that are skipped, and the run still finishes with status `Completed`. Always compare the row count of your output file against your input file.
+      - **Column headers are matched exactly, and letter case matters.** A misspelled or differently cased header is not reported as an error. The column is read as empty instead, and the file is processed as though you had sent no value at all.
+      - **A run is all or nothing.** If one hotel in the file cannot be processed, the whole run fails and no partial output is uploaded. You resubmit the entire file.
+      - **`Completed` does not guarantee an output file.** If the run succeeds but uploading the output fails, the status still reads `Completed`. Treat a missing output file as a run to raise with support rather than as an empty result.
+      - **There is no idempotency key.** Re-uploading the same file starts a new and independent run. Nothing detects or merges duplicate submissions.
+      - **There is no per row error report.** The only failure detail is a run level status and reason, so a problem with a single row is not attributed to that row.
+      - **Supply `VervotechHotelId` wherever you have it.** When a hotel cannot be resolved to a Vervotech ID, its rooms are grouped only among themselves and carry a placeholder identifier in the output, which cannot be joined to your Vervotech content.
+      - **File based runs are processed in English.** The `culture` option is not available on this path.
 
-      ##  Choosing
+      ## Choosing
 
-      * Choose **real time** for live pricing and availability flows, for anything that needs a confidence score, and whenever your own mapping rules must apply.
-      * Choose **asynchronous** when a single hotel carries more rooms than the real time path accepts and you can tolerate polling for the result.
-      * Choose **file based** for one off or periodic bulk analysis across many hotels, for catalogue onboarding, and for evaluating coverage before you build an integration.
+      - Choose **real time** for live pricing and availability flows, for anything that needs a confidence score, and whenever your own mapping rules must apply.
+      - Choose **asynchronous** when a single hotel carries more rooms than the real time path accepts and you can tolerate polling for the result.
+      - Choose **file based** for one off or periodic bulk analysis across many hotels, for catalogue onboarding, and for evaluating coverage before you build an integration.
   - name: Room Mapping/Preparing Your Request Data
     description: |
       Mapping quality is bounded by the quality of what you send. The service standardises supplier room names into structured attributes and then groups rooms that describe the same thing, so every field you supply is evidence, and every field you omit is evidence the service has to infer or do without.
 
       This section covers what is required, what is silently ignored, and what materially improves your results.
 
-      ##  Required and optional fields
+      ## Required and optional fields
 
-      | Field | Required | Notes |
-      | --------- | ---------- | ---------- |
-      | `roomRates` | Yes | Must contain at least one room. |
-      | `index` | Yes | Must be unique within the request. Results are returned against this value. |
-      | `roomName` | Yes | The supplier room name, as the supplier gave it to you. |
-      | `provider` | Yes | Must be a name from the master provider list, and your account must be entitled to it. |
-      | `providerHotelId` | Yes | The supplier's own identifier for the property. |
-      | `code` | No | Not rejected when missing, but strongly recommended. Send the room code, not the rate plan code. |
-      | `description` | No | Frequently carries bedding, view and occupancy detail that the room name omits. |
-      | `beds`, `view`, `boardBasis`, `refundability` | No | Used as supporting evidence where present. |
-      | `attributes` | No | Structured room features. See the value rules below. |
+      | Field                                         | Required | Notes                                                                                            |
+      | --------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------ |
+      | `roomRates`                                   | Yes      | Must contain at least one room.                                                                  |
+      | `index`                                       | Yes      | Must be unique within the request. Results are returned against this value.                      |
+      | `roomName`                                    | Yes      | The supplier room name, as the supplier gave it to you.                                          |
+      | `provider`                                    | Yes      | Must be a name from the master provider list, and your account must be entitled to it.           |
+      | `providerHotelId`                             | Yes      | The supplier's own identifier for the property.                                                  |
+      | `code`                                        | No       | Not rejected when missing, but strongly recommended. Send the room code, not the rate plan code. |
+      | `description`                                 | No       | Frequently carries bedding, view and occupancy detail that the room name omits.                  |
+      | `beds`, `view`, `boardBasis`, `refundability` | No       | Used as supporting evidence where present.                                                       |
+      | `attributes`                                  | No       | Structured room features. See the value rules below.                                             |
 
-      ##  Send supplier room names unmodified
+      ## Send supplier room names unmodified
 
       Send the room name exactly as the supplier gave it to you. Cleaning, title casing, truncating or reordering the name before you send it removes the very signals the service uses. Abbreviations, punctuation, duplicated whitespace, embedded HTML and common misspellings are already handled for you.
 
-      ##  Attribute values are matched against a fixed set
+      ## Attribute values are matched against a fixed set
 
       Attribute keys are matched case insensitively, so `HasBalcony` and `hasbalcony` behave identically. **Attribute values are not free text.** Only four values are recognised, case insensitively:
 
-      | Value sent | Effect |
-      | --------- | ---------- |
-      | `Yes` or `Allowed` | The attribute is applied. |
+      | Value sent           | Effect                                                           |
+      | -------------------- | ---------------------------------------------------------------- |
+      | `Yes` or `Allowed`   | The attribute is applied.                                        |
       | `No` or `NotAllowed` | The negative form of the attribute is applied, where one exists. |
-      | Anything else | **Silently ignored.** |
+      | Anything else        | **Silently ignored.**                                            |
 
       This is the most common source of quietly missing attributes. `true`, `1`, `Y`, `enabled` and an empty string all fall into the last row. They are not rejected and no warning is returned. They simply have no effect, and the room is mapped as though you had never sent the attribute at all.
 
-      Not every attribute has a negative form. Where one does not exist, a `No` value is ignored rather than rejected. Use the master room attributes endpoint for the list of keys that are recognised.
+      The value is not trimmed either, so `"Yes "` with a trailing space falls into the same last row. Trim your values before you send them.
 
-      ##  Header spelling matters more than it looks
+      Not every attribute has a negative form. Where one does not exist, a `No` value is ignored rather than rejected. Negative forms are also less complete than positive ones, and a few are spelled differently from their positive counterpart, so verify that a `No` value has taken effect rather than assuming it. Use the master room attributes endpoint for the list of keys that are recognised, bearing in mind that it returns the master list with any attributes your account ignores already removed.
+
+      ## Header spelling matters more than it looks
 
       On the file based path, column headers are matched exactly and letter case matters, so a header that your pipeline has helpfully normalised is read as an empty column rather than reported as an error.
 
       The clearest illustration is on the output side. The occupancy column in the output file is named `MappedOcccupancy`, with three letter c characters. Any integration that corrects that spelling on ingest, or that assumes the obvious spelling, silently reads an empty column. Match header strings exactly in both directions, and check your header row against the input template linked in the File Based Room Mapping (Offline) section before every upload.
 
-      ##  Non-English content
+      ## Non-English content
 
-      When non-English text is detected in your room details, the group carries the warning code `NON_ENGLISH_CONTENT_DETECTED`. Treat that warning as a quality signal rather than noise. Token normalisation is skipped for that content and the room category falls back to the room name as a whole, so grouping is markedly less reliable than it is for English content. Send the `culture` header for the languages listed under References, and review any group that carries this warning.
+      When non-English text is detected in your room details, the group carries the warning code `NON_ENGLISH_CONTENT_DETECTED`. Treat that warning as a quality signal rather than noise. Much of the normalisation is skipped for that content and the room category falls back to the room name as a whole, so grouping is markedly less reliable than it is for English content. Send the `culture` header for one of the supported languages listed on the References page, and review any group that carries this warning.
 
-      ##  What makes a room description strong
+      Two limits are worth knowing. Detection runs on the room name only, not the description, so non-English text confined to a description raises no warning. It also runs only when the request culture is English, so a request already sent under another culture will not raise it either.
+
+      ## What makes a room description strong
 
       Where several rooms in a group could serve as the reference, the best evidenced room is preferred. The signals below are listed in decreasing order of weight, and they are a good guide to what is worth sourcing from your suppliers:
 
-      * A room that matches a Vervotech master room, and a master room that has been verified
-      * A clear, non generic room category
-      * Occupancy, both the bed occupancy type and the guest count
-      * Bed types
-      * Room size
-      * View
-      * Bedroom count
-      * Additional room features
+      - A room that matches a Vervotech master room, and a master room that has been verified
+      - A clear, non generic room category
+      - Occupancy, both the bed occupancy type and the guest count
+      - Bed types
+      - Room size
+      - View
+      - Bedroom count
+      - Additional room features
 
       A name that can only be resolved to a suspect category counts against a room rather than for it. A bare name such as `Standard Room` is not itself penalised, but it carries no distinguishing detail, so it gives the service nothing to group on.
 
-      ##  Reading the scores
+      ## Reading the scores
 
-      * `matchScore` and `cfs` are clamped at a floor of 60. A value of 60 therefore means "60 or below" rather than exactly 60, and neither value should be read as a percentage.
+      - Two scores are returned per mapped rate. `matchScore` starts at 100 and subtracts penalties for missing or conflicting evidence. `cfs` continues from that figure and subtracts a further set of softer penalties, so `cfs` is always at or below `matchScore` for the same rate.
+      - Both are clamped at a floor, and the floors differ. A value sitting at the floor therefore means "at or below that figure" rather than exactly it.
+      - Both floors are configurable and can be set per account, so confirm the values that apply to yours before you tune a threshold against them.
+      - Neither value is a percentage. They are penalty ledgers, not ratios, so do not present them to end users as a confidence percentage.
   - name: Room Mapping/How Supplier Content Is Standardised
     description: |
       Every room you send passes through the same standardisation pipeline before any grouping happens. Knowing what that pipeline does, and what it keys off, explains most of the results you will see.
 
-      ##  The pipeline
+      ## The pipeline
 
       1. **Structured attributes are merged into the room text**, so the attributes you send as fields and the details a supplier wrote into the room name are considered together.
       2. **The text is cleaned.** Embedded HTML is stripped, underscores and separators are normalised, and duplicated whitespace is collapsed.
@@ -160,110 +174,119 @@ tags:
       5. **Attributes are extracted** into structured values: room category, bed types and counts, view, occupancy, board basis, accessibility and other room features.
       6. **Rooms are grouped** on the resulting attributes.
 
-      ##  Standardisation is supplier aware
+      ## Standardisation is supplier aware
 
       The `provider` value you send is not just a label. It selects how your room content is interpreted, because suppliers write room names in materially different styles, with their own abbreviations, their own noise wording and their own use of the description field.
 
-      The value is matched exactly, after trimming and lower casing.
+      How the value is compared depends on which check it reaches, and the two checks behave differently.
 
-      * **A `provider` value that does not match the master list is still accepted, and no warning is returned.** It is simply interpreted without any supplier specific knowledge.
-      * Always source `provider` from the master provider names endpoint, and keep the value stable across requests. Changing the spelling of a provider name, or introducing a variant such as an internal code, silently changes how that supplier's content is read.
-      * Send one supplier's rooms under one provider name. Do not merge several suppliers behind a single value, and do not split one supplier across several.
+      - **Entitlement is checked first, and it is strict.** Your `provider` value is compared against the provider list your account is entitled to, exactly and case sensitively, with no trimming. A value with different casing or a stray leading or trailing space is rejected with status code `1011` before it is interpreted at all.
+      - **Interpretation is lenient, and silent.** A provider that passes the entitlement check but has no supplier specific handling is read with the default interpretation. No warning is returned, and the mapping still runs. Only a handful of supplier families have bespoke handling; every other entitled provider is read this way, which is normal and expected.
+      - Always source `provider` from the provider names endpoint, and keep the value stable across requests. Changing the spelling of a provider name, or introducing a variant such as an internal code, will either be rejected outright or silently change how that supplier's content is read.
+      - Send one supplier's rooms under one provider name. Do not merge several suppliers behind a single value, and do not split one supplier across several.
 
-      ##  Board basis
+      The entitlement list is scoped to your account rather than being a global master list, and the file based path checks against a differently scoped list again. See Preparing Your Files for what that means in practice.
+
+      ## Board basis
 
       Board basis is standardised from a keyword vocabulary that covers both common wording and supplier specific wording. The supported standard values, and the keywords behind them, are listed under References.
 
-      ##  When the vocabulary does not cover your content
+      ## When the vocabulary does not cover your content
 
-      The vocabulary is extended continuously from real supplier data. If you see room names that are consistently misread, or a supplier whose wording is not being interpreted well, send samples to customersuccess@vervotech.com. Real examples are far more actionable than a description of the problem.
+      The vocabulary is extended continuously from real supplier data. If you see room names that are consistently misread, or a supplier whose wording is not being interpreted well, send samples to support@vervotech.com. Real examples are far more actionable than a description of the problem.
   - name: Room Mapping/Integration Guidelines and Go Live
     description: |
       A practical sequence for integrating room mapping, and a checklist to run before you go live.
 
-      ##  1. Credentials and headers
+      ## 1. Credentials and headers
 
       Every room mapping call carries these headers:
 
-      | Header | Required | Purpose |
-      | --------- | ---------- | ---------- |
-      | `accountId` | Yes | Your Vervotech room mapping account. |
-      | `token` | Yes | Your room mapping API token. |
-      | `correlationId` | Yes | A unique value per request, which you generate. Quote it when raising support requests, because it is how a request is traced. |
-      | `culture` | No | Response localisation. See References for the supported values. |
+      | Header          | Required                             | Purpose                                                                                                                        |
+      | --------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+      | `accountId`     | Yes                                  | Your Vervotech room mapping account.                                                                                           |
+      | `token`         | Yes                                  | Your room mapping API token.                                                                                                   |
+      | `correlationId` | Yes on `POST /api/2.0/mapping/rooms` | A unique value per request, which you generate. Quote it when raising support requests, because it is how a request is traced. |
+      | `culture`       | No                                   | Response localisation. See the References page for the supported values.                                                       |
+
+      `correlationId` is enforced only on `POST /api/2.0/mapping/rooms`, where omitting it returns HTTP 403. Send it on every call regardless, because it is what makes a request traceable when you raise it with support. A `runId` header is accepted as an alias, and when neither is sent a value is generated for you, which means a request you did not tag is far harder to find later.
 
       Use `demoAccount` while you build. Contact the Vervotech mappings team for your own credentials.
 
-      ##  2. Pull the reference data first
+      ## 2. Pull the reference data first
 
       Before you send any mapping request, retrieve and cache the master reference data, and build your feed against it rather than against hardcoded strings:
 
-      * The master provider names, which are the only valid values for `provider`
-      * The master room attributes, which are the only keys recognised in `attributes`
-      * The master room amenities
+      - The provider names your account is entitled to, which are the only valid values for `provider`
+      - The room attributes endpoint, which returns the recognised keys for `attributes` with any your account ignores already removed
+      - The master room amenities
 
-      ##  3. Build the request
+      ## 3. Build the request
 
-      * One hotel per request on the real time and asynchronous paths.
-      * A unique `index` on every room. This is how results are matched back to your input.
-      * Send `code`, `description` and `attributes` wherever you have them. See Preparing Your Request Data.
+      - Send one hotel per request on the real time and asynchronous paths. This is a requirement, not something the API checks for you. If rooms for more than one hotel are sent together, the request is accepted and the additional hotel identifiers are discarded silently, so the rooms are mapped against a single resolved hotel and no error is returned.
+      - A unique `index` on every room. This is how results are matched back to your input. Note that `index` is a number and defaults to `0` when omitted, so two rooms that both leave it out collide and the request is rejected with status code `1007`.
+      - Send `code`, `description` and `attributes` wherever you have them. See Preparing Your Request Data.
 
-      ##  4. Choose the path
+      ## 4. Choose the path
 
       See Choosing Your Integration Path. In short: real time for live flows, asynchronous for a single hotel with a large room set, file based for bulk catalogue work.
 
-      ##  5. Handle responses correctly
+      ## 5. Handle responses correctly
 
-      * **Check the response body, not only the HTTP status.** A rejected request can still return HTTP 200, with `success` set to `false` and a `statusCode` carrying the reason. Branch on `statusCode`.
-      * Status code `1012` covers two different rejections: a payload that exceeds your per request limit, and a daily call quota that has been exhausted. Those need different responses from your integration, so read the accompanying message rather than the code alone.
-      * Treat `1011` as a configuration problem rather than a transient one. It means a provider or content preference that your account is not entitled to.
-      * Back off and retry on transient transport failures. Do not retry validation failures, which will fail identically every time.
-      * Poll at a sensible interval. Neither the asynchronous path nor the file based path has a progress endpoint, so continuous polling adds load without returning an answer any sooner.
+      - **Check the response body, not only the HTTP status.** A rejected request can still return HTTP 200, with `success` set to `false` and a `statusCode` carrying the reason. Branch on `statusCode`.
+      - The HTTP status is not a reliable signal on its own, and it is not consistent across rejections. Most validation failures return HTTP 200 with the reason in the body, but some rejections return HTTP 400 carrying the same shape of body. Read `statusCode` in both cases.
+      - Status code `1012` covers two different rejections: a payload that exceeds your per request limit, and a daily call quota that has been exhausted. Those need different responses from your integration, so read the accompanying message rather than the code alone. They also differ in HTTP status, the payload limit returning 200 and the quota returning 400, which is another reason not to branch on it.
+      - Treat `1011` as a configuration problem rather than a transient one. It means a provider or content preference that your account is not entitled to.
+      - Back off and retry on transient transport failures. Do not retry validation failures, which will fail identically every time.
+      - Poll at a sensible interval. Neither the asynchronous path nor the file based path has a progress endpoint, so continuous polling adds load without returning an answer any sooner.
 
-      ##  6. Pre go live checklist
+      ## 6. Pre go live checklist
 
-      * Every `provider` value is sourced from the master provider names endpoint and matches exactly.
-      * Every `attributes` key is sourced from the master room attributes endpoint, and every value is one of `Yes`, `Allowed`, `No` or `NotAllowed`.
-      * `index` is unique within each request, and results are matched back by it.
-      * Request sizes are checked against your account payload limit before sending, with the asynchronous path used above it.
-      * `correlationId` is generated per request and retained in your logs.
-      * Retry and back off behaviour is implemented and has been tested against a forced failure.
-      * Error handling branches on `statusCode`, including `1011` and `1012`, and not on the HTTP status alone.
-      * Room names are passed through unmodified.
-      * If you use the file based path, your header row is identical to the input template linked in the File Based Room Mapping (Offline) section, and your process compares the output row count against the input row count.
+      - Every `provider` value is sourced from the provider names endpoint and matches exactly, including its casing, with no leading or trailing spaces.
+      - Every `attributes` key is sourced from the master room attributes endpoint, and every value is one of `Yes`, `Allowed`, `No` or `NotAllowed`.
+      - `index` is unique within each request, and results are matched back by it.
+      - Request sizes are checked against your account payload limit before sending, with the asynchronous path used above it.
+      - `correlationId` is generated per request and retained in your logs.
+      - Retry and back off behaviour is implemented and has been tested against a forced failure.
+      - Error handling branches on `statusCode`, including `1011` and `1012`, and not on the HTTP status alone.
+      - Room names are passed through unmodified.
+      - If you use the file based path, your header row is identical to the input template linked in the File Based Room Mapping (Offline) section, and your process compares the output row count against the input row count.
 
-      ##  7. Support
+      ## 7. Support
 
-      Raise integration issues at https://support.vervotech.com/support/home, or write to customersuccess@vervotech.com. Always quote the `correlationId` of an affected request, together with the account and provider names involved.
+      Raise integration issues at [the Vervotech support portal](https://support.vervotech.com/support/home), or write to support@vervotech.com. Always quote the `correlationId` of an affected request, together with the account and provider names involved.
   - name: Room Mapping/Service Limits
     description: |
       The limits below are the service limits and operational characteristics of the room mapping service. They describe what the service accepts and how it behaves.
 
       **These are not availability, latency or throughput commitments.** Those are contractual rather than technical, and are covered under Service levels below.
 
-      ##  Request and file limits
+      ## Request and file limits
 
-      | Limit | Value |
-      | --------- | ---------- |
-      | Rooms per real time request | The payload limit configured on your account. The general guidance is 1,000 rooms per request; above that, use the asynchronous path. |
-      | Hotels per real time or asynchronous request | One |
-      | Uploaded file size | 10 MB |
-      | Files per upload call | One |
-      | Rooms processed per file based batch | 100,000. Rows beyond this are skipped, and the run still finishes with status `Completed`. |
-      | Hotels per file based submission | Not limited, within the file size and row limits |
-      | Daily API calls | A per day call quota applies to your account. Exceeding it returns status code `1012`. |
+      | Limit                                        | Value                                                                                                                                 |
+      | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+      | Rooms per real time request                  | The payload limit configured on your account. The general guidance is 1,000 rooms per request; above that, use the asynchronous path. |
+      | Hotels per real time or asynchronous request | One                                                                                                                                   |
+      | Uploaded file size                           | 10 MB                                                                                                                                 |
+      | Files per upload call                        | One                                                                                                                                   |
+      | Rooms processed per file based batch         | 100,000 by default. Rows beyond this are skipped, and the run still finishes with status `Completed`.                                 |
+      | Hotels per file based submission             | Not limited, within the file size and row limits                                                                                      |
+      | Daily API calls                              | A per day call quota applies to your account. Exceeding it returns status code `1012`.                                                |
+
+      The file based batch size is a configured default rather than a fixed ceiling, so confirm the figure that applies to your account before you size a submission against it.
 
       For volumes above the 10 MB upload limit, an SFTP based submission is available. Contact the Vervotech mappings team to have it configured.
 
-      ##  Processing behaviour
+      ## Processing behaviour
 
-      * Real time requests are answered in the response.
-      * Asynchronous requests return a `traceId` immediately, and the result is retrieved by polling.
-      * File based runs are queued and processed in the background. There is no progress endpoint, so poll the status endpoint at a sensible interval, and treat a run as ready only once its status reads `Completed`.
+      - Real time requests are answered in the response.
+      - Asynchronous requests return a `traceId` immediately, and the result is retrieved by polling. Both asynchronous calls are `POST`.
+      - File based runs are queued and processed in the background. There is no progress endpoint, so poll the status endpoint at a sensible interval, and treat a run as ready only once its status reads `Completed`.
+      - A `Completed` status does not by itself guarantee that an output file was produced. If the run succeeds but uploading the output fails, the status still reads `Completed`. Treat a missing output file as a run to raise with support rather than as an empty result.
 
-      ##  Service levels
+      ## Service levels
 
-      Availability, throughput and response time commitments are contractual rather than technical, so they are set out in your agreement with Vervotech rather than in this specification. Contact customersuccess@vervotech.com for the service levels that apply to your subscription, or to discuss raising any of the limits above for a specific integration.
+      Availability, throughput and response time commitments are contractual rather than technical, so they are set out in your agreement with Vervotech rather than in this specification. Contact support@vervotech.com for the service levels that apply to your subscription, or to discuss raising any of the limits above for a specific integration.
   - name: Room Mapping/Mapping API
     description: >-
       Real-time room mapping API that groups rooms from multiple providers for a single hotel into standardized room categories with attributes such as bed type, view, and amenities.
@@ -286,13 +309,13 @@ tags:
 
       **Requirements:**
 
-      | Requirement | Value |
-      |-------------|-------|
-      | Format | CSV, comma (`,`) separated |
-      | Header row | Required, and must be the first line of the file |
-      | Files per upload | One |
-      | Maximum file size | 10 MB |
-      | Rooms per file | 100,000 |
+      | Requirement            | Value                                                                                                       |
+      | ---------------------- | ----------------------------------------------------------------------------------------------------------- |
+      | Format                 | CSV, comma (`,`) separated                                                                                  |
+      | Header row             | Required, and must be the first line of the file                                                            |
+      | Files per upload       | One                                                                                                         |
+      | Maximum file size      | 10 MB                                                                                                       |
+      | Rooms per file         | 100,000 by default                                                                                          |
       | Accepted content types | `text/csv`, `application/vnd.ms-excel`, `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` |
 
       - **Column headers are matched exactly, and letter case matters.** A header that is misspelled or cased differently is not reported as an error. The column is read as empty instead, and the file is processed as though you had sent no value at all. Check your header row against the template above before every upload.
@@ -309,11 +332,15 @@ tags:
 
       - Do not include rate plan codes in the `RoomCode` column.
 
-      - `Provider` values are compared exactly against the master provider names. A file containing a provider your account is not authorised for is rejected, and the message lists the unrecognised names.
+      - `Provider` values are compared exactly, and case sensitively, against the provider list your account is entitled to. A file containing a provider your account is not authorised for is refused, and the message lists the unrecognised names. Note that this refusal is returned in the response body with an HTTP 200 status and no status code, so check the body rather than the HTTP status. The message is also always prefixed with the mandatory fields wording, even when an unauthorised provider is the only fault.
+
+      - **The file based path and the API paths check `provider` against two different account scoped lists.** A provider accepted in a file upload can still be rejected with status code `1011` on the real time or asynchronous path, and the reverse is also possible. Verify a provider on the path you intend to use rather than assuming one result carries over.
 
       - Mandatory values are checked across the whole file rather than row by row. If any row has an empty `Provider`, `ProviderHotelId` or `RoomName`, the entire file is rejected and the message names the column, not the row, so correct every occurrence before resubmitting.
 
-      - A maximum of 100,000 rooms are processed per batch. Records beyond this limit are skipped automatically and the run still finishes with status `Completed`, so always compare the row count of your output file against your input file.
+      - 100,000 rooms are processed per batch by default. Records beyond this limit are skipped automatically and the run still finishes with status `Completed`, so always compare the row count of your output file against your input file.
+
+      - A `Completed` status does not by itself guarantee an output file. If the run succeeds but uploading the output fails, the status still reads `Completed`. Treat a missing output file as a run to raise with support rather than as an empty result.
 
       - For volumes above the 10 MB upload limit, use the SFTP based submission instead. Contact the Vervotech mappings team to have it configured.
 
@@ -321,22 +348,22 @@ tags:
 
       ### Input File Columns
 
-      | Column | Required | Description |
-      |--------|----------|-------------|
+      | Column               | Required    | Description                                                                                                                                                                                                                                                                                                       |
+      | -------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
       | **VervotechHotelId** | Recommended | The Vervotech ID assigned to the property. If omitted, the system attempts a lookup using Provider and ProviderHotelId. If lookup fails, an ID is auto-generated in the format `{Provider}_{ProviderHotelId}`. Without this value, rooms from different providers for the same hotel cannot be grouped correctly. |
-      | **Provider** | Yes | Supplier name. Must match the [master provider names](https://docs.vervotech.com/get-all-provider-names-16946072e0). |
-      | **ProviderHotelId** | Yes | The property ID assigned by the supplier. |
-      | **RoomCode** | Yes | The room code from the supplier. Do not include rate plan codes. |
-      | **RoomName** | Yes | The room name from the supplier. |
-      | **Description** | No | Room description from the supplier. |
-      | **Refundability** | No | Refundability information from the supplier. |
-      | **BoardBasis** | No | Board basis information from the supplier. |
-      | **Bed** | No | Bedding information from the supplier. Accepted, but it does not currently influence the mapping output. |
-      | **View** | No | View information from the supplier. Accepted, but it does not currently influence the mapping output. |
-      | **MaxOccupancy** | No | Maximum occupancy as reported by the supplier. Accepted, but it does not currently influence the mapping output. |
-      | **MinOccupancy** | No | Minimum occupancy as reported by the supplier. Accepted, but it does not currently influence the mapping output. |
+      | **Provider**         | Yes         | Supplier name. Must match the [master provider names](https://docs.vervotech.com/get-all-provider-names-16946072e0).                                                                                                                                                                                              |
+      | **ProviderHotelId**  | Yes         | The property ID assigned by the supplier.                                                                                                                                                                                                                                                                         |
+      | **RoomCode**         | No          | The room code from the supplier. Strongly recommended. Do not include rate plan codes.                                                                                                                                                                                                                            |
+      | **RoomName**         | Yes         | The room name from the supplier.                                                                                                                                                                                                                                                                                  |
+      | **Description**      | No          | Room description from the supplier.                                                                                                                                                                                                                                                                               |
+      | **Bed**              | No          | Bedding information from the supplier. Accepted, but it does not currently influence the mapping output.                                                                                                                                                                                                          |
+      | **View**             | No          | View information from the supplier. Accepted, but it does not currently influence the mapping output.                                                                                                                                                                                                             |
+      | **Refundability**    | No          | Refundability information from the supplier.                                                                                                                                                                                                                                                                      |
+      | **BoardBasis**       | No          | Board basis information from the supplier.                                                                                                                                                                                                                                                                        |
 
-      At upload time only **ProviderHotelId**, **Provider** and **RoomName** are checked for a non empty value. The remaining columns are validated no further, so a header problem in any other column surfaces only as reduced mapping quality in the output.
+      These are the columns the input template carries, listed in the order the template uses, and they are the only columns the service reads. Anything else in your file is ignored.
+
+      At upload time only **ProviderHotelId**, **Provider** and **RoomName** are checked for a non empty value. The remaining columns are validated no further, so a problem in any other column surfaces only as reduced mapping quality in the output.
 
       ---
 
@@ -346,26 +373,32 @@ tags:
 
       Columns are written in the order shown below.
 
-      | Column | Description |
-      |--------|-------------|
-      | **VervotechId** | Unique identifier assigned to the mapped room. |
-      | **ProviderHotelId** | The property ID assigned by the supplier. |
-      | **Provider** | Supplier name from the [master provider list](https://docs.vervotech.com/get-all-provider-names-16946072e0). |
-      | **GroupId** | Composite key in the format `VervotechHotelId-GroupId`. |
-      | **RoomCode** | Room code from the supplier. |
-      | **RoomName** | Room name from the supplier. |
-      | **IsExclusive** | Indicates whether this room was supplied by only one provider in the group. |
-      | **MappedStandardName** | Standardized room name generated by Vervotech algorithms. |
-      | **MappedMasterTitle** | Room name from the official hotel website. |
-      | **MasterRoomId** | Master ID from Vervotech master data. Empty if no match is found. |
-      | **MappedCategory** | Room category extracted from the room name. |
-      | **MappedLocation** | Room location extracted from the room name. Examples: Highfloor, Oceanfront, Seaside. |
-      | **MappedView** | View category extracted from the room name. |
-      | **MappedBedType** | Bed type extracted from the room name. |
-      | **BedInfo** | Display form of the bedding for the group. Example: 2 Queen. |
-      | **MappedAttributes** | Unique room features extracted from the room name. |
-      | **MappedOcccupancy** | Maximum occupancy as reported by the supplier. Note the spelling of this header, which carries three letter c characters. |
-      | **BoardBasis** | Standardized board basis for the room rate. |
+      | Column                 | Description                                                                                                                                                                 |
+      | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+      | **VervotechId**        | The Vervotech ID of the **hotel**, repeated on every row for that hotel. This is not a per room identifier.                                                                 |
+      | **ProviderHotelId**    | The property ID assigned by the supplier.                                                                                                                                   |
+      | **Provider**           | Supplier name from the [master provider list](https://docs.vervotech.com/get-all-provider-names-16946072e0).                                                                |
+      | **GroupId**            | Identifies the group within this run, in the format `VervotechHotelId-index`. Not stable across runs. See the note below.                                                   |
+      | **RoomCode**           | Room code from the supplier.                                                                                                                                                |
+      | **RoomName**           | Room name from the supplier.                                                                                                                                                |
+      | **IsExclusive**        | Indicates that the group has a single provider. Reported per group, not per row. See the note below.                                                                        |
+      | **MappedStandardName** | Standardized room name generated by Vervotech algorithms.                                                                                                                   |
+      | **MappedMasterTitle**  | Room name from the official hotel website.                                                                                                                                  |
+      | **MasterRoomId**       | Master ID from Vervotech master data. Empty if no match is found.                                                                                                           |
+      | **MappedCategory**     | Room category extracted from the room name.                                                                                                                                 |
+      | **MappedLocation**     | Room location extracted from the room name. Examples: Highfloor, Oceanfront, Seaside.                                                                                       |
+      | **MappedView**         | View category extracted from the room name.                                                                                                                                 |
+      | **MappedBedType**      | Bed type extracted from the room name.                                                                                                                                      |
+      | **BedInfo**            | Display form of the bedding for the group. Example: 2 Queen.                                                                                                                |
+      | **MappedAttributes**   | Unique room features extracted from the room name.                                                                                                                          |
+      | **MappedOcccupancy**   | Bed occupancy category derived from the room name, such as `Single`, `Double`, `Triple` or `NA`. Note the spelling of this header, which carries three letter c characters. |
+      | **BoardBasis**         | Standardized board basis for the room rate.                                                                                                                                 |
+
+      Three of these columns are read wrongly often enough to be worth calling out.
+
+      - **`GroupId` is not a durable key.** The part after the hotel ID is a counter assigned within a single run, in the order the groups happened to be produced. Re-running the same file can give the same room a different `GroupId`. Do not persist it as a join key; join on the supplier's own `Provider` and `RoomCode` instead.
+      - **`IsExclusive` can under report.** It is derived from a provider set that is not always updated when groups are merged, so a group holding rates from more than one provider can still be marked exclusive. Treat it as a hint rather than a guarantee, and derive exclusivity yourself from the `Provider` column if it matters to you.
+      - **`MappedOcccupancy` is derived, not supplied.** It is read out of the room name and expressed as a category, not copied from any occupancy value you sent. Unlike the occupancy fields on the input side, this one does take part in grouping.
   - name: Room Mapping/Board Basis Mappings
     description: >-
       Standardize meal plan terminology from different suppliers. Retrieve master board basis definitions and map raw supplier terms to standardized codes such as BB (Bed and Breakfast) and HB (Half Board).
@@ -5048,9 +5081,30 @@ paths:
         - Room Mapping/File Based Room Mapping (Offline)
       parameters:
         - name: accountId
-          in: query
-          description: Your Vervotech room mapping account ID.
+          in: header
+          description: >-
+            Your Vervotech room mapping account ID. Use `demoAccount` for
+            testing.
           required: true
+          example: demoAccount
+          schema:
+            type: string
+        - name: token
+          in: header
+          description: >-
+            Your Vervotech room mapping API token. Use `demoApiToken` for
+            testing.
+          required: true
+          example: demoApiToken
+          schema:
+            type: string
+        - name: accountId
+          in: query
+          description: >-
+            Your account ID, repeated as a query parameter. Omit it and the runs
+            for the account in the `accountId` header are returned. Supply it
+            and it must name that same account.
+          required: false
           example: demoAccount
           schema:
             type: string
@@ -5151,10 +5205,31 @@ paths:
 
 
         Only runs with status `Completed` have an output file. Check the status first with Get File Mapping Status.
+
+
+        You can download only your own runs. A `runId` belonging to another account is refused with the same error the API returns for an invalid token.
       operationId: mappingtool/DownloadFile
       tags:
         - Room Mapping/File Based Room Mapping (Offline)
       parameters:
+        - name: accountId
+          in: header
+          description: >-
+            Your Vervotech room mapping account ID. Use `demoAccount` for
+            testing.
+          required: true
+          example: demoAccount
+          schema:
+            type: string
+        - name: token
+          in: header
+          description: >-
+            Your Vervotech room mapping API token. Use `demoApiToken` for
+            testing.
+          required: true
+          example: demoApiToken
+          schema:
+            type: string
         - name: runId
           in: query
           description: >-
